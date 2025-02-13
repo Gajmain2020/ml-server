@@ -9,4 +9,3 @@
 - Step 3: Run `pip install -r requirements.txt`
 - Step 4: Finally to run the server run `python app.py`
 
-- 
