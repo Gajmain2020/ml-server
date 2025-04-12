@@ -1,2 +1,6 @@
 .dev
 .venv
+saved_model
+saved_model copy
+venv
+__pycache__

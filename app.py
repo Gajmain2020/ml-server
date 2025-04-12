@@ -1,64 +1,61 @@
-import pickle
 from flask import Flask, request, jsonify
-from transformers import T5Tokenizer
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import torch
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)  # Allow CORS for all origins
 
-# Load the model from model.pkl
+model_path = "./saved_model"  # Path to your locally saved model
+
+# Load model and tokenizer
 try:
-    with open("model.pkl", "rb") as f:
-        model = pickle.load(f)  # Load trained model
-
-    tokenizer = T5Tokenizer.from_pretrained("t5-base")  # Load tokenizer
-    print("✅ Model loaded successfully from model.pkl!")
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
+    print("✅ Model loaded successfully from:", model_path)
 except Exception as e:
-    print(f"❌ Error loading model: {e}")
+    print("❌ Error loading model:", e)
+    raise e
 
-def detect_error_type(original, corrected):
-    """
-    Compares original and corrected sentences to determine the type of error.
-    """
-    if original.lower() == corrected.lower():
-        return "No errors detected"
-    
-    original_words = set(original.lower().split())
-    corrected_words = set(corrected.lower().split())
-
-    if len(original_words) < len(corrected_words):
-        return "Missing words"
-    elif len(original_words) > len(corrected_words):
-        return "Extra words"
-    else:
-        return "Grammar structure issue"
-
-@app.route('/')
+@app.route("/")
 def home():
-    return "Grammar Correction API is running!"
+    return "Model is running."
 
-@app.route('/correct', methods=['POST'])
-def predict():
+@app.route("/correct", methods=["POST"])
+def correct_text():
     try:
-        data = request.json  # Get JSON input
-        sentence = data.get("sentence", "").strip()
+        data = request.get_json()
+        input_text = data.get("text", "")
+        if not input_text:
+            return jsonify({"error": "No text provided"}), 400
 
-        if not sentence:
-            return jsonify({"error": "No sentence provided"}), 400
+        # Tokenize input text
+        inputs = tokenizer(input_text, return_tensors="pt", truncation=True, padding=True)
 
-        # Preprocess input
-        input_text = f"grammar: {sentence}"
-        input_ids = tokenizer.encode(input_text, return_tensors="pt")
+        # Generate output
+        with torch.no_grad():
+            outputs = model.generate(**inputs, num_beams=4, max_length=512, early_stopping=True)
 
-        # Generate corrected text
-        output_ids = model.generate(input_ids, max_length=100, num_beams=5, early_stopping=True)
-        corrected_sentence = tokenizer.decode(output_ids[0], skip_special_tokens=True).replace("Grammar: ", "")
+        corrected_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-        # Detect error type
-        error_type = detect_error_type(sentence, corrected_sentence)
+        # Determine error type (basic logic)
+        if input_text.strip().lower() == corrected_text.strip().lower():
+            error_type = "No Error"
+        elif "?" in input_text and "?" not in corrected_text:
+            error_type = "Punctuation"
+        elif any(char.isupper() for char in corrected_text) and not any(char.isupper() for char in input_text):
+            error_type = "Capitalization"
+        else:
+            error_type = "Grammar / Syntax"
 
-        return jsonify({"original": sentence, "corrected": corrected_sentence, "error_type": error_type})
+        return jsonify({
+            "original_text": input_text,
+            "corrected": corrected_text,
+            "error_type": error_type
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)
